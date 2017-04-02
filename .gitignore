@@ -2,3 +2,5 @@
 node_modules/
 config.json
 repos/
+npm-debug.log
+.DS_Store

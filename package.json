@@ -11,6 +11,8 @@
   "license": "MIT",
   "dependencies": {
     "bluebird": "^3.5.0",
-    "lodash": "^4.17.4"
+    "lodash": "^4.17.4",
+    "mysql": "2.13.0",
+    "iconv-lite": "0.4.13"
   }
 }

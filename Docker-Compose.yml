@@ -1,0 +1,30 @@
+mysql:
+  image: mariadb:10.0.30
+  environment:
+      - MYSQL_ROOT_PASSWORD=password
+      - MYSQL_USER=middleware
+      - MYSQL_PASSWORD=middleware
+      - MYSQL_DATABASE=middleware
+  volumes:
+      - ./support/mysql/cnf/replication.cnf:/etc/mysql/conf.d/replication.cnf
+  ports:
+    - 3306:3306
+redis:
+  image: redis:3.0.7-alpine
+  ports:
+    - 6379:6379
+mysql-middlware:
+  image: node:6.10.1-wheezy
+  links:
+    - mysql
+    - redis
+  environment:
+    - MYSQL_ROOT_PASSWORD=password
+    - MYSQL_USER=middleware
+    - MYSQL_PASSWORD=middleware
+    - MYSQL_DATABASE=middleware
+  volumes:
+    - ./:/src/
+  ports:
+    - 1337:1337
+  command: tail -f /dev/null
