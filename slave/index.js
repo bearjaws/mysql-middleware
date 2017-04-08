@@ -3,7 +3,19 @@ var util = require('util');
 var EventEmitter = require('events').EventEmitter;
 var generateBinlog = require('./lib/sequence/binlog');
 
-function ZongJi(dsn, options) {
+
+var cloneObjectSimple = function(obj){
+    var out = {};
+    for(var i in obj){
+        if(obj.hasOwnProperty(i)){
+            out[i] = obj[i];
+        }
+    }
+    return out;
+};
+
+
+function Slave(dsn, options) {
   this.set(options);
 
   EventEmitter.call(this);
@@ -32,19 +44,9 @@ function ZongJi(dsn, options) {
   this._init();
 }
 
-var cloneObjectSimple = function(obj){
-  var out = {};
-  for(var i in obj){
-    if(obj.hasOwnProperty(i)){
-      out[i] = obj[i];
-    }
-  }
-  return out;
-}
+util.inherits(Slave, EventEmitter);
 
-util.inherits(ZongJi, EventEmitter);
-
-ZongJi.prototype._init = function() {
+Slave.prototype._init = function() {
   var self = this;
   var binlogOptions = {
     tableMap: self.tableMap,
@@ -55,7 +57,7 @@ ZongJi.prototype._init = function() {
       name: '_isChecksumEnabled',
       callback: function(checksumEnabled) {
         self.useChecksum = checksumEnabled;
-        binlogOptions.useChecksum = checksumEnabled
+        binlogOptions.useChecksum = checksumEnabled;
       }
     },
     {
@@ -101,7 +103,7 @@ ZongJi.prototype._init = function() {
   };
 };
 
-ZongJi.prototype._isChecksumEnabled = function(next) {
+Slave.prototype._isChecksumEnabled = function(next) {
   var self = this;
   var sql = 'select @@GLOBAL.binlog_checksum as checksum';
   var ctrlConnection = self.ctrlConnection;
@@ -140,7 +142,7 @@ ZongJi.prototype._isChecksumEnabled = function(next) {
   });
 };
 
-ZongJi.prototype._findBinlogEnd = function(next) {
+Slave.prototype._findBinlogEnd = function(next) {
   var self = this;
   self.ctrlConnection.query('SHOW BINARY LOGS', function(err, rows) {
     if (err) {
@@ -152,7 +154,7 @@ ZongJi.prototype._findBinlogEnd = function(next) {
   });
 };
 
-ZongJi.prototype._executeCtrlCallbacks = function() {
+Slave.prototype._executeCtrlCallbacks = function() {
   if (this.ctrlCallbacks.length > 0) {
     this.ctrlCallbacks.forEach(function(cb) {
       setImmediate(cb);
@@ -165,7 +167,7 @@ var tableInfoQueryTemplate = 'SELECT ' +
   'COLUMN_COMMENT, COLUMN_TYPE ' +
   "FROM columns " + "WHERE table_schema='%s' AND table_name='%s'";
 
-ZongJi.prototype._fetchTableInfo = function(tableMapEvent, next) {
+Slave.prototype._fetchTableInfo = function(tableMapEvent, next) {
   var self = this;
   var sql = util.format(tableInfoQueryTemplate,
     tableMapEvent.schemaName, tableMapEvent.tableName);
@@ -198,11 +200,11 @@ ZongJi.prototype._fetchTableInfo = function(tableMapEvent, next) {
   });
 };
 
-ZongJi.prototype.set = function(options){
+Slave.prototype.set = function(options){
   this.options = options || {};
 };
 
-ZongJi.prototype.start = function(options) {
+Slave.prototype.start = function(options) {
   var self = this;
   self.set(options);
 
@@ -246,7 +248,7 @@ ZongJi.prototype.start = function(options) {
   }
 };
 
-ZongJi.prototype.stop = function(){
+Slave.prototype.stop = function(){
   var self = this;
   // Binary log connection does not end with destroy()
   self.connection.destroy();
@@ -258,7 +260,7 @@ ZongJi.prototype.stop = function(){
   );
 };
 
-ZongJi.prototype._skipEvent = function(eventName){
+Slave.prototype._skipEvent = function(eventName){
   var include = this.options.includeEvents;
   var exclude = this.options.excludeEvents;
   return !(
@@ -268,7 +270,7 @@ ZongJi.prototype._skipEvent = function(eventName){
     (exclude instanceof Array && exclude.indexOf(eventName) === -1)));
 };
 
-ZongJi.prototype._skipSchema = function(database, table){
+Slave.prototype._skipSchema = function(database, table){
   var include = this.options.includeSchema;
   var exclude = this.options.excludeSchema;
   return !(
@@ -285,8 +287,8 @@ ZongJi.prototype._skipSchema = function(database, table){
            exclude[database].indexOf(table) === -1))))));
 };
 
-ZongJi.prototype._emitError = function(error) {
+Slave.prototype._emitError = function(error) {
   this.emit('error', error);
 };
 
-module.exports = ZongJi;
+module.exports = Slave;

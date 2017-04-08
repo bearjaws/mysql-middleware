@@ -15,15 +15,15 @@ var CHECKSUM_SIZE = 4;
  * Attributes:
  *   position: Position inside next binlog
  *   binlogName: Name of next binlog file
- *   zongji: ZongJi instance
+ *   slave: Slave instance
  **/
 
-function RowsEvent(parser, options, zongji) {
+function RowsEvent(parser, options, slave) {
   BinlogEvent.apply(this, arguments);
-  this._zongji = zongji;
+  this._slave = slave;
   this._readTableId(parser);
   this.flags = parser.parseUnsignedNumber(2);
-  this.useChecksum = zongji.useChecksum;
+  this.useChecksum = slave.useChecksum;
 
   // Version 2 Events
   if (Version2Events.indexOf(options.eventType) !== -1) {
@@ -92,7 +92,7 @@ RowsEvent.prototype.dump = function() {
 };
 
 RowsEvent.prototype._fetchOneRow = function(parser) {
-  return readRow(this.tableMap[this.tableId], parser, this._zongji);
+  return readRow(this.tableMap[this.tableId], parser, this._slave);
 };
 
 var readRow = function(tableMap, parser, emitter) {
@@ -141,8 +141,8 @@ util.inherits(UpdateRows, RowsEvent);
 UpdateRows.prototype._fetchOneRow = function(parser) {
   var tableMap = this.tableMap[this.tableId];
   return {
-    before: readRow(tableMap, parser, this._zongji),
-    after: readRow(tableMap, parser, this._zongji)
+    before: readRow(tableMap, parser, this._slave),
+    after: readRow(tableMap, parser, this._slave)
   };
 };
 

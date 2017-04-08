@@ -3,7 +3,7 @@ var Packet = require('../packet');
 var capture = require('../capture');
 
 module.exports = function(options) {
-  var self = this; // ZongJi instance
+  var self = this; // Slave instance
   var Sequence = capture(self.connection).Sequence;
   var BinlogHeader = Packet.initBinlogHeader.call(self, options);
 

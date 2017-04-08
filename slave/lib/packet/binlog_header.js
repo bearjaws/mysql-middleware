@@ -1,7 +1,7 @@
 var getEventClass = require('../code_map').getEventClass;
 
 module.exports = function generateBinlogHeader(options){
-  var zongji = this;
+  var slave = this;
   var tableMap = options.tableMap;
   var useChecksum = options.useChecksum;
 
@@ -42,9 +42,9 @@ module.exports = function generateBinlogHeader(options){
 
     var EventClass = getEventClass(eventType);
     // Check event filtering
-    if(!zongji._skipEvent(EventClass.name.toLowerCase())){
+    if(!slave._skipEvent(EventClass.name.toLowerCase())){
       try{
-        this._event = new EventClass(parser, options, zongji);
+        this._event = new EventClass(parser, options, slave);
       }catch(err){
         // Record error occurence but suppress until handled
         this._error = err;

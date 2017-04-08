@@ -113,7 +113,7 @@ Query.prototype.dump = function() {
  * see http://dev.mysql.com/doc/internals/en/table-map-event.html
  **/
 
-function TableMap(parser, options, zongji) {
+function TableMap(parser, options, slave) {
   BinlogEvent.apply(this, arguments);
   this.tableMap = options.tableMap;
 
@@ -129,7 +129,7 @@ function TableMap(parser, options, zongji) {
   var tableNameLength = parser.parseUnsignedNumber(1);
   this.tableName = parser.parseString(tableNameLength);
 
-  if(zongji._skipSchema(this.schemaName, this.tableName)){
+  if(slave._skipSchema(this.schemaName, this.tableName)){
     // This event has been filtered out because of its database/table
     parser._offset = parser._packetEnd;
     this._filtered = true;

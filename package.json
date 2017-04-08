@@ -11,8 +11,14 @@
   "license": "MIT",
   "dependencies": {
     "bluebird": "^3.5.0",
+    "chai": "^3.5.0",
+    "chai-as-promised": "^6.0.0",
+    "iconv-lite": "0.4.13",
+    "knex": "^0.12.9",
     "lodash": "^4.17.4",
-    "mysql": "2.13.0",
-    "iconv-lite": "0.4.13"
+    "mysql": "2.13.0"
+  },
+  "devDependencies": {
+    "faker": "^4.1.0"
   }
 }
