@@ -85,7 +85,6 @@ Slave.prototype._isChecksumEnabled = function() {
 
       var setChecksumSql = 'set @master_binlog_checksum=@@global.binlog_checksum';
       if (checksumEnabled === true) {
-          console.log('lol');
           return connection.queryAsync(setChecksumSql).catch(function () {
               self.emit('error', err);
           }).finally(function() {
