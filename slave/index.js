@@ -1,36 +1,30 @@
-var mysql = require('mysql');
-var util = require('util');
-var EventEmitter = require('events').EventEmitter;
-var generateBinlog = require('./lib/sequence/binlog');
+let _ = require('lodash');
+let bluebird = require('bluebird');
+let EventEmitter = require('events').EventEmitter;
+let mysql = require('mysql');
+let util = require('util');
 
+bluebird.promisifyAll(require("mysql/lib/Connection").prototype);
+bluebird.promisifyAll(require("mysql/lib/Pool").prototype);
 
-var cloneObjectSimple = function(obj){
-    var out = {};
-    for(var i in obj){
-        if(obj.hasOwnProperty(i)){
-            out[i] = obj[i];
-        }
-    }
-    return out;
-};
-
-
-function Slave(dsn, options) {
+let generateBinlog = require('./lib/sequence/binlog');
+let queries = require('./lib/queries');
+function Slave(databaseConfig, options) {
   this.set(options);
 
   EventEmitter.call(this);
 
   // to send table info query
-  var ctrlDsn = cloneObjectSimple(dsn);
-  ctrlDsn.database = 'information_schema';
-  this.ctrlConnection = mysql.createConnection(ctrlDsn);
+  var clonedConfig = _.cloneDeep(databaseConfig);
+  clonedConfig.database = 'information_schema';
+  this.ctrlConnection = mysql.createConnection(clonedConfig);
   this.ctrlConnection.on('error', this._emitError.bind(this));
   this.ctrlConnection.on('unhandledError', this._emitError.bind(this));
 
   this.ctrlConnection.connect();
   this.ctrlCallbacks = [];
 
-  this.connection = mysql.createConnection(dsn);
+  this.connection = mysql.createConnection(databaseConfig);
   this.connection.on('error', this._emitError.bind(this));
   this.connection.on('unhandledError', this._emitError.bind(this));
 
@@ -40,163 +34,108 @@ function Slave(dsn, options) {
   // Include 'rotate' events to keep these properties updated
   this.binlogName = null;
   this.binlogNextPos = null;
-
-  this._init();
+    this.binlogOptions = {
+        tableMap: this.tableMap,
+    };
 }
 
 util.inherits(Slave, EventEmitter);
 
-Slave.prototype._init = function() {
+Slave.prototype.start = function() {
   var self = this;
-  var binlogOptions = {
+  this.binlogOptions = {
     tableMap: self.tableMap,
   };
 
-  var asyncMethods = [
-    {
-      name: '_isChecksumEnabled',
-      callback: function(checksumEnabled) {
-        self.useChecksum = checksumEnabled;
-        binlogOptions.useChecksum = checksumEnabled;
-      }
-    },
-    {
-      name: '_findBinlogEnd',
-      callback: function(result){
-        if(result && self.options.startAtEnd){
-          binlogOptions.filename = result.Log_name;
-          binlogOptions.position = result.File_size;
-        }
-      }
-    }
-  ];
-
-  var methodIndex = 0;
-  var nextMethod = function(){
-    var method = asyncMethods[methodIndex];
-    self[method.name](function(/* args */){
-      method.callback.apply(this, arguments);
-      methodIndex++;
-      if(methodIndex < asyncMethods.length){
-        nextMethod();
-      }else{
-        ready();
-      }
+    return this._isChecksumEnabled().then(function() {
+        return self._findBinlogEnd();
+    }).then(function() {
+        return self.slaveReady();
+    }).then(function() {
+        return self.startSlave(self.options);
     });
-  };
-  nextMethod();
+};
 
-  var ready = function(){
+Slave.prototype.slaveReady = function() {
+    let self = this;
     // Run asynchronously from _init(), as serverId option set in start()
     if(self.options.serverId !== undefined){
-      binlogOptions.serverId = self.options.serverId;
+        self.binlogOptions.serverId = self.options.serverId;
     }
 
     if(('binlogName' in self.options) && ('binlogNextPos' in self.options)) {
-      binlogOptions.filename = self.options.binlogName;
-      binlogOptions.position = self.options.binlogNextPos
+        self.binlogOptions.filename = self.options.binlogName;
+        self.binlogOptions.position = self.options.binlogNextPos
     }
 
-    self.binlog = generateBinlog.call(self, binlogOptions);
+    self.binlog = generateBinlog.call(self, self.binlogOptions);
     self.ready = true;
-    self._executeCtrlCallbacks();
-  };
 };
 
-Slave.prototype._isChecksumEnabled = function(next) {
+Slave.prototype._isChecksumEnabled = function() {
   var self = this;
-  var sql = 'select @@GLOBAL.binlog_checksum as checksum';
   var ctrlConnection = self.ctrlConnection;
   var connection = self.connection;
 
-  ctrlConnection.query(sql, function(err, rows) {
-    if (err) {
-      if(err.toString().match(/ER_UNKNOWN_SYSTEM_VARIABLE/)){
-        // MySQL < 5.6.2 does not support @@GLOBAL.binlog_checksum
-        return next(false);
-      } else {
-        // Any other errors should be emitted
-        self.emit('error', err);
-        return;
+  return ctrlConnection.queryAsync(queries.getChecksum()).then(function(rows){
+      var checksumEnabled = true;
+      if (rows[0].checksum === 'NONE') {
+          checksumEnabled = false;
       }
-    }
 
-    var checksumEnabled = true;
-    if (rows[0].checksum === 'NONE') {
-      checksumEnabled = false;
-    }
+      var setChecksumSql = 'set @master_binlog_checksum=@@global.binlog_checksum';
+      if (checksumEnabled === true) {
+          console.log('lol');
+          return connection.queryAsync(setChecksumSql).catch(function () {
+              self.emit('error', err);
+          }).finally(function() {
+              self.useChecksum = checksumEnabled;
+              self.binlogOptions.useChecksum = checksumEnabled;
+              return bluebird.resolve();
+          });
+      }
+  }).catch(function(err) {
+      if(err.toString().match(/ER_UNKNOWN_SYSTEM_VARIABLE/)) {
+          return false;
+      }
+      self.emit('error', err);
+      return false;
+  });
+};
 
-    var setChecksumSql = 'set @master_binlog_checksum=@@global.binlog_checksum';
-    if (checksumEnabled) {
-      connection.query(setChecksumSql, function(err) {
-        if (err) {
-          // Errors should be emitted
-          self.emit('error', err);
+Slave.prototype._findBinlogEnd = function() {
+  var self = this;
+  return self.ctrlConnection.queryAsync('SHOW BINARY LOGS').then(function(rows) {
+      let result = rows.length > 0 ? rows[rows.length - 1] : null;
+      if(result && self.options.startAtEnd){
+          self.binlogOptions.filename = result.Log_name;
+          self.binlogOptions.position = result.File_size;
+      }
+  }).catch(function(err) {
+      self.emit('error', err);
+  });
+};
+
+Slave.prototype._fetchTableInfo = function(tableMapEvent) {
+  var self = this;
+  var sql = queries.getTableSchema(tableMapEvent.schemaName, tableMapEvent.tableName);
+
+  return this.ctrlConnection.queryAsync(sql).then(function(rows) {
+      if (rows.length === 0) {
+          self.emit('error', new Error(
+              'Insufficient permissions to access: ' +
+              tableMapEvent.schemaName + '.' + tableMapEvent.tableName));
           return;
-        }
-        next(checksumEnabled);
-      });
-    } else {
-      next(checksumEnabled);
-    }
-  });
-};
-
-Slave.prototype._findBinlogEnd = function(next) {
-  var self = this;
-  self.ctrlConnection.query('SHOW BINARY LOGS', function(err, rows) {
-    if (err) {
-      // Errors should be emitted
+      }
+      self.tableMap[tableMapEvent.tableId] = {
+          columnSchemas: rows,
+          parentSchema: tableMapEvent.schemaName,
+          tableName: tableMapEvent.tableName
+      };
+  }).catch(function(err) {
+      // No way to recover.
       self.emit('error', err);
       return;
-    }
-    next(rows.length > 0 ? rows[rows.length - 1] : null);
-  });
-};
-
-Slave.prototype._executeCtrlCallbacks = function() {
-  if (this.ctrlCallbacks.length > 0) {
-    this.ctrlCallbacks.forEach(function(cb) {
-      setImmediate(cb);
-    });
-  }
-};
-
-var tableInfoQueryTemplate = 'SELECT ' +
-  'COLUMN_NAME, COLLATION_NAME, CHARACTER_SET_NAME, ' +
-  'COLUMN_COMMENT, COLUMN_TYPE ' +
-  "FROM columns " + "WHERE table_schema='%s' AND table_name='%s'";
-
-Slave.prototype._fetchTableInfo = function(tableMapEvent, next) {
-  var self = this;
-  var sql = util.format(tableInfoQueryTemplate,
-    tableMapEvent.schemaName, tableMapEvent.tableName);
-
-  this.ctrlConnection.query(sql, function(err, rows) {
-    if (err) {
-      // Errors should be emitted
-      self.emit('error', err);
-      // This is a fatal error, no additional binlog events will be
-      // processed since next() will never be called
-      return;
-    }
-
-    if (rows.length === 0) {
-      self.emit('error', new Error(
-        'Insufficient permissions to access: ' +
-        tableMapEvent.schemaName + '.' + tableMapEvent.tableName));
-      // This is a fatal error, no additional binlog events will be
-      // processed since next() will never be called
-      return;
-    }
-
-    self.tableMap[tableMapEvent.tableId] = {
-      columnSchemas: rows,
-      parentSchema: tableMapEvent.schemaName,
-      tableName: tableMapEvent.tableName
-    };
-
-    next();
   });
 };
 
@@ -204,11 +143,10 @@ Slave.prototype.set = function(options){
   this.options = options || {};
 };
 
-Slave.prototype.start = function(options) {
+Slave.prototype.startSlave = function(options) {
   var self = this;
   self.set(options);
 
-  var _start = function() {
     self.connection._implyConnect();
     self.connection._protocol._enqueue(new self.binlog(function(error, event){
       if(error) return self.emit('error', error);
@@ -221,13 +159,12 @@ Slave.prototype.start = function(options) {
 
           if (!tableMap) {
             self.connection.pause();
-            self._fetchTableInfo(event, function() {
-              // merge the column info with metadata
-              event.updateColumnInfo();
-              self.emit('binlog', event);
-              self.connection.resume();
+
+            return self._fetchTableInfo(event).then(function() {
+                event.updateColumnInfo();
+                self.emit('binlog', event);
+                self.connection.resume();
             });
-            return;
           }
           break;
         case 'Rotate':
@@ -239,13 +176,8 @@ Slave.prototype.start = function(options) {
       self.binlogNextPos = event.nextPosition;
       self.emit('binlog', event);
     }));
-  };
 
-  if (this.ready) {
-    _start();
-  } else {
-    this.ctrlCallbacks.push(_start);
-  }
+    return bluebird.resolve();
 };
 
 Slave.prototype.stop = function(){

@@ -10,7 +10,10 @@ let slave = new Slave({
     host     : 'localhost',
     user     : 'repl',
     password : 'slavepass'
+}, {
+    includeEvents: ['tablemap', 'writerows', 'updaterows', 'deleterows']
 });
+
 
 let knex = require('./knex');
 var recentEvent = null;
@@ -18,16 +21,16 @@ var recentEvent = null;
 var lastRow = null;
 slave.on('binlog', function(event) {
     recentEvent = event;
-});
-
-slave.start({
-    includeEvents: ['tablemap', 'writerows', 'updaterows', 'deleterows']
+    // event.dump();
 });
 
 after(function() {
     slave.stop();
 });
 
+before(function() {
+    return slave.start();
+});
 beforeEach(function() {
     recentEvent = null;
 });
@@ -38,11 +41,8 @@ process.on('SIGINT', function() {
     process.exit();
 });
 
-slave.on('binlog', function(evt) {
-    evt.dump();
-});
 describe('Replication', function() {
-    this.slow(200);
+    this.slow(400);
     this.timeout(5000);
     it('Should be able to handle a insert into a table.', function(done) {
         let row = {idtest_table: faker.random.number(), col_1: faker.internet.userName()};
